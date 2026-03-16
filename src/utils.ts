@@ -192,12 +192,11 @@ export function setWeComAccount(
   };
 
   return {
-      ...cfg,
-      channels: {
-        ...cfg.channels,
-        [CHANNEL_ID]: merged,
-      },
-    };
+    ...cfg,
+    channels: {
+      ...cfg.channels,
+      [CHANNEL_ID]: merged,
+    },
   };
 }
 

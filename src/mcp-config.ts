@@ -257,4 +257,3 @@ async function saveMcpConfigToPluginJsonFromLocal(
     runtime.log?.(`[${accountId}] Local MCP config saved: ${Object.keys(mcpServers).join(", ")}`);
   });
 }
-}

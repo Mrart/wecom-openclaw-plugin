@@ -10,8 +10,8 @@ import { getWeComRuntime } from "./runtime.js";
 import { monitorWeComProvider } from "./monitor.js";
 import { getWeComWebSocket } from "./state-manager.js";
 import { wecomOnboardingAdapter } from "./onboarding.js";
-import type { WeComConfig, ResolvedWeComAccount } from "./utils.js";
-import { resolveWeComAccount } from "./utils.js";
+import type { WeComConfig, ResolvedWeComAccount, WeComMultiAccountConfig } from "./utils.js";
+import { resolveWeComAccount, getAllWeComAccountIds, getWeComAccountById } from "./utils.js";
 import { CHANNEL_ID, TEXT_CHUNK_LIMIT } from "./const.js";
 import { uploadAndSendMedia } from "./media-uploader.js";
 
@@ -28,14 +28,18 @@ async function sendWeComMessage({
   content: string;
   accountId?: string;
 }): Promise<{ channel: string; messageId: string; chatId: string }> {
-  const resolvedAccountId = accountId ?? DEFAULT_ACCOUNT_ID;
+      const cfg = getWeComRuntime().config.readConfigFileSnapshot();
+      let resolvedAccountId = accountId;
+      if (!resolvedAccountId || resolvedAccountId === DEFAULT_ACCOUNT_ID) {
+        resolvedAccountId = wecomPlugin.config.defaultAccountId(cfg);
+      }
 
   // 从 to 中提取 chatId（格式是 "${CHANNEL_ID}:chatId" 或直接是 chatId）
   const channelPrefix = new RegExp(`^${CHANNEL_ID}:`, "i");
   const chatId = to.replace(channelPrefix, "");
 
   // 获取 WSClient 实例
-  const wsClient = getWeComWebSocket(resolvedAccountId);
+  const wsClient = getWeComWebSocket(resolvedAccountId as string);
   if (!wsClient) {
     throw new Error(`WSClient not connected for account ${resolvedAccountId}`);
   }
@@ -95,18 +99,49 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
   },
   reload: {configPrefixes: [`channels.${CHANNEL_ID}`]},
   config: {
-    // 列出所有账户 ID（最小实现只支持默认账户）
-    listAccountIds: () => [DEFAULT_ACCOUNT_ID],
+    // 列出所有账户 ID
+    listAccountIds: (cfg) => {
+      const ids = getAllWeComAccountIds(cfg);
+      return ids.length > 0 ? ids : [DEFAULT_ACCOUNT_ID];
+    },
 
     // 解析账户配置
-    resolveAccount: (cfg) => resolveWeComAccount(cfg),
+    resolveAccount: (cfg, accountId) => {
+      if (accountId) {
+        const acc = getWeComAccountById(cfg, accountId);
+        if (acc) return acc;
+      }
+      const accounts = getAllWeComAccountIds(cfg);
+      if (accounts.length > 0 && (!accountId || accountId === DEFAULT_ACCOUNT_ID)) {
+        const acc = getWeComAccountById(cfg, accounts[0]);
+        if (acc) return acc;
+      }
+      return resolveWeComAccount(cfg);
+    },
 
     // 获取默认账户 ID
-    defaultAccountId: () => DEFAULT_ACCOUNT_ID,
+    defaultAccountId: (cfg) => {
+      const ids = getAllWeComAccountIds(cfg);
+      return ids.length > 0 ? ids[0] : DEFAULT_ACCOUNT_ID;
+    },
 
     // 设置账户启用状态
-    setAccountEnabled: ({cfg, enabled}) => {
-      const wecomConfig = (cfg.channels?.[CHANNEL_ID] ?? {}) as WeComConfig;
+    setAccountEnabled: ({cfg, accountId, enabled}) => {
+      const wecomConfig = (cfg.channels?.[CHANNEL_ID] ?? {}) as WeComMultiAccountConfig;
+      if (wecomConfig.accounts && wecomConfig.accounts.length > 0) {
+        return {
+          ...cfg,
+          channels: {
+            ...cfg.channels,
+            [CHANNEL_ID]: {
+              ...wecomConfig,
+              accounts: wecomConfig.accounts.map((acc) =>
+                acc.accountId === accountId ? { ...acc, enabled } : acc
+              ),
+            },
+          },
+        };
+      }
       return {
         ...cfg,
         channels: {
@@ -120,8 +155,20 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
     },
 
     // 删除账户
-    deleteAccount: ({cfg}) => {
-      const wecomConfig = (cfg.channels?.[CHANNEL_ID] ?? {}) as WeComConfig;
+    deleteAccount: ({cfg, accountId}) => {
+      const wecomConfig = (cfg.channels?.[CHANNEL_ID] ?? {}) as WeComMultiAccountConfig;
+      if (wecomConfig.accounts && wecomConfig.accounts.length > 0) {
+        return {
+          ...cfg,
+          channels: {
+            ...cfg.channels,
+            [CHANNEL_ID]: {
+              ...wecomConfig,
+              accounts: wecomConfig.accounts.filter((acc) => acc.accountId !== accountId),
+            },
+          },
+        };
+      }
       const {botId, secret, ...rest} = wecomConfig;
       return {
         ...cfg,
@@ -147,8 +194,8 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
     }),
 
     // 解析允许来源列表
-    resolveAllowFrom: ({cfg}) => {
-      const account = resolveWeComAccount(cfg);
+    resolveAllowFrom: ({cfg, accountId}) => {
+      const account = wecomPlugin.config.resolveAccount(cfg, accountId);
       return (account.config.allowFrom ?? []).map((entry) => String(entry));
     },
 
@@ -223,19 +270,23 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
     listGroups: async () => [],
   },
   outbound: {
-    deliveryMode: "gateway",
+    deliveryMode: "hybrid",
     chunker: (text, limit) => getWeComRuntime().channel.text.chunkMarkdownText(text, limit),
     textChunkLimit: TEXT_CHUNK_LIMIT,
     sendText: async ({to, text, accountId}) => {
       return sendWeComMessage({to, content: text, accountId: accountId ?? undefined});
     },
     sendMedia: async ({to, text, mediaUrl, mediaLocalRoots, accountId}) => {
-      const resolvedAccountId = accountId ?? DEFAULT_ACCOUNT_ID;
+  const cfg = getWeComRuntime().config.readConfigFileSnapshot();
+  let resolvedAccountId = accountId;
+  if (!resolvedAccountId || resolvedAccountId === DEFAULT_ACCOUNT_ID) {
+    resolvedAccountId = wecomPlugin.config.defaultAccountId(cfg);
+  }
       const channelPrefix = new RegExp(`^${CHANNEL_ID}:`, "i");
       const chatId = to.replace(channelPrefix, "");
 
       // 获取 WSClient 实例
-      const wsClient = getWeComWebSocket(resolvedAccountId);
+      const wsClient = getWeComWebSocket(resolvedAccountId as string);
       if (!wsClient) {
         throw new Error(`WSClient not connected for account ${resolvedAccountId}`);
       }
@@ -348,36 +399,60 @@ export const wecomPlugin: ChannelPlugin<ResolvedWeComAccount> = {
         abortSignal: ctx.abortSignal,
       });
     },
-    logoutAccount: async ({cfg}) => {
+    logoutAccount: async ({cfg, account}) => {
       const nextCfg = {...cfg} as OpenClawConfig;
-      const wecomConfig = (cfg.channels?.[CHANNEL_ID] ?? {}) as WeComConfig;
-      const nextWecom = {...wecomConfig};
+      const wecomConfig = (cfg.channels?.[CHANNEL_ID] ?? {}) as WeComMultiAccountConfig;
       let cleared = false;
       let changed = false;
 
-      if (nextWecom.botId || nextWecom.secret) {
-        delete nextWecom.botId;
-        delete nextWecom.secret;
-        cleared = true;
-        changed = true;
+      if (wecomConfig.accounts && wecomConfig.accounts.length > 0) {
+        // 多账户模式下，仅清除该账号的凭据
+        const targetAcc = wecomConfig.accounts.find((a) => a.accountId === account.accountId);
+        if (targetAcc && (targetAcc.botId || targetAcc.secret)) {
+          const newAccounts = wecomConfig.accounts.map((a) => {
+            if (a.accountId === account.accountId) {
+              const {botId, secret, ...rest} = a;
+              return { ...rest, botId: "", secret: "" } as any;
+            }
+            return a;
+          });
+          nextCfg.channels = {
+            ...nextCfg.channels,
+            [CHANNEL_ID]: { ...wecomConfig, accounts: newAccounts },
+          };
+          cleared = true;
+          changed = true;
+        }
+      } else {
+        // 单账户模式
+        const nextWecom = {...(wecomConfig as WeComConfig)};
+        if (nextWecom.botId || nextWecom.secret) {
+          delete nextWecom.botId;
+          delete nextWecom.secret;
+          cleared = true;
+          changed = true;
+        }
+
+        if (changed) {
+          if (Object.keys(nextWecom).length > 0) {
+            nextCfg.channels = {...nextCfg.channels, [CHANNEL_ID]: nextWecom};
+          } else {
+            const nextChannels = {...nextCfg.channels};
+            delete (nextChannels as Record<string, unknown>)[CHANNEL_ID];
+            if (Object.keys(nextChannels).length > 0) {
+              nextCfg.channels = nextChannels;
+            } else {
+              delete nextCfg.channels;
+            }
+          }
+        }
       }
 
       if (changed) {
-        if (Object.keys(nextWecom).length > 0) {
-          nextCfg.channels = {...nextCfg.channels, [CHANNEL_ID]: nextWecom};
-        } else {
-          const nextChannels = {...nextCfg.channels};
-          delete (nextChannels as Record<string, unknown>)[CHANNEL_ID];
-          if (Object.keys(nextChannels).length > 0) {
-            nextCfg.channels = nextChannels;
-          } else {
-            delete nextCfg.channels;
-          }
-        }
         await getWeComRuntime().config.writeConfigFile(nextCfg);
       }
 
-      const resolved = resolveWeComAccount(changed ? nextCfg : cfg);
+      const resolved = wecomPlugin.config.resolveAccount(changed ? nextCfg : cfg, account.accountId);
       const loggedOut = !resolved.botId && !resolved.secret;
 
       return {cleared, envToken: false, loggedOut};
