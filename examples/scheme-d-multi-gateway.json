@@ -1,0 +1,54 @@
+{
+  "$schema": "https://example.com/openclaw-schema.json",
+  "description": "Scheme D: Multiple Gateways - Enterprise hard isolation with separate gateway instances",
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "path": "/openclaw/message",
+    "token": "xxx-your-gateway-token-xxx"
+  },
+  "agents": {
+    "list": [
+      {
+        "id": "department-a-agent",
+        "name": "Department A Agent",
+        "workspace": "./workspace/department-a",
+        "model": {
+          "provider": "openai",
+          "name": "gpt-4o",
+          "apiKey": "xxx-dept-a-api-key-xxx"
+        },
+        "tools": {
+          "enabled": ["bash", "read", "write", "edit", "glob", "grep"]
+        }
+      }
+    ]
+  },
+  "bindings": [
+    {
+      "agent": "department-a-agent",
+      "peer": {
+        "kind": "wecom",
+        "id": "xxx-department-a-group-id-xxx"
+      }
+    }
+  ],
+  "sessions": {
+    "strategy": "multi",
+    "storage": "./sessions",
+    "isolation": "hard"
+  },
+  "logging": {
+    "level": "info",
+    "file": "./logs/openclaw.log"
+  },
+  "notes": {
+    "setup": "This config represents ONE gateway instance. For Scheme D, you need MULTIPLE separate installations.",
+    "deployment": "Deploy separate instances on different ports or hosts.",
+    "filesRequired": [
+      "gateway-a/openclaw.json (port 8080)",
+      "gateway-b/openclaw.json (port 8081)",
+      "gateway-c/openclaw.json (port 8082)"
+    ]
+  }
+}

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://example.com/openclaw-schema.json",
+  "description": "Scheme A: Single Agent, Multiple Sessions - Simplest setup for personal use",
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "path": "/openclaw/message",
+    "token": "xxx-your-gateway-token-xxx"
+  },
+  "agents": {
+    "list": [
+      {
+        "id": "main-agent",
+        "name": "Main Assistant",
+        "workspace": "./workspace/main",
+        "model": {
+          "provider": "openai",
+          "name": "gpt-4o",
+          "apiKey": "xxx-your-openai-api-key-xxx"
+        },
+        "tools": {
+          "enabled": ["bash", "read", "write", "edit", "glob", "grep"]
+        }
+      }
+    ]
+  },
+  "bindings": [
+    {
+      "agent": "main-agent",
+      "peer": {
+        "kind": "wecom",
+        "id": "xxx-your-corp-id-xxx"
+      }
+    }
+  ],
+  "sessions": {
+    "strategy": "multi",
+    "storage": "./sessions"
+  },
+  "logging": {
+    "level": "info",
+    "file": "./logs/openclaw.log"
+  }
+}

@@ -171,6 +171,329 @@ In addition to the group allowlist, you can restrict which members within a grou
 
 ---
 
+## 🏗️ Multi-Agent Configuration
+
+OpenClaw supports flexible multi-agent deployments with 5 different schemes. Choose based on your isolation needs and team structure.
+
+### Quick Selection Guide
+
+| Scheme | Isolation | Complexity | Best For |
+|--------|-----------|------------|----------|
+| **A** | None | ⭐ | Personal use, testing |
+| **B** | Soft (workspace) | ⭐⭐ | Teams with different roles |
+| **B2** | Soft + Routing | ⭐⭐⭐ | Unified bot entry point |
+| **C** | Hard (Docker) | ⭐⭐⭐⭐ | Security-sensitive data |
+| **D** | Hard (Separate) | ⭐⭐⭐⭐⭐ | Enterprise, high availability |
+
+### Scheme Overview
+
+#### Scheme A: Single Agent, Shared Workspace
+- **Use case**: Personal use, testing, small teams
+- **Architecture**: One agent serves all users with shared workspace
+- **Config example**: [`examples/scheme-a-single-agent.json`](examples/scheme-a-single-agent.json)
+
+```json
+{
+  "agents": {
+    "list": [{
+      "id": "main-agent",
+      "workspace": "./workspace/main"
+    }]
+  },
+  "bindings": [{
+    "agent": "main-agent",
+    "peer": { "kind": "wecom", "id": "xxx-your-corp-id-xxx" }
+  }]
+}
+```
+
+#### Scheme B: Multiple Agents, Soft Isolation (Recommended)
+- **Use case**: Teams with different roles (frontend, backend, devops)
+- **Architecture**: Multiple agents with separate workspaces, single gateway
+- **Config example**: [`examples/scheme-b-multi-agent-soft.json`](examples/scheme-b-multi-agent-soft.json)
+
+```json
+{
+  "agents": {
+    "list": [
+      { "id": "frontend-agent", "workspace": "./workspace/frontend" },
+      { "id": "backend-agent", "workspace": "./workspace/backend" },
+      { "id": "devops-agent", "workspace": "./workspace/devops" }
+    ]
+  },
+  "bindings": [
+    { "agent": "frontend-agent", "peer": { "kind": "wecom", "id": "xxx-frontend-group-id-xxx" } },
+    { "agent": "backend-agent", "peer": { "kind": "wecom", "id": "xxx-backend-group-id-xxx" } }
+  ]
+}
+```
+
+#### Scheme B2: Multiple Agents, Single Bot (Group-Based Routing)
+- **Use case**: Single WeCom bot routing to different agents by group
+- **Architecture**: Router directs messages based on source group/user
+- **Config example**: [`examples/scheme-b2-multi-agent-single-bot.json`](examples/scheme-b2-multi-agent-single-bot.json)
+
+```json
+{
+  "routing": {
+    "enabled": true,
+    "strategy": "group-based",
+    "fallback": "support-agent",
+    "rules": [
+      {
+        "condition": { "peer.kind": "wecom", "peer.id": "xxx-support-group-id-xxx" },
+        "target": "support-agent"
+      }
+    ]
+  }
+}
+```
+
+#### Scheme C: Docker Sandbox Isolation
+- **Use case**: Security-sensitive data, untrusted commands, compliance
+- **Architecture**: Each session runs in isolated Docker container
+- **Config example**: [`examples/scheme-c-docker-sandbox.json`](examples/scheme-c-docker-sandbox.json)
+
+```json
+{
+  "agents": {
+    "defaults": {
+      "sandbox": {
+        "enabled": true,
+        "type": "docker",
+        "image": "node:20-alpine",
+        "docker": {
+          "binds": ["./workspace:/workspace:rw"],
+          "network": "none",
+          "memory": "512m"
+        }
+      }
+    }
+  },
+  "security": {
+    "sandboxEnforcement": true,
+    "blockedCommands": ["sudo", "su", "rm -rf /"]
+  }
+}
+```
+
+#### Scheme D: Multiple Gateway Hard Isolation
+- **Use case**: Enterprise deployments, complete department isolation
+- **Architecture**: Separate gateway instances per department
+- **Config example**: [`examples/scheme-d-multi-gateway.json`](examples/scheme-d-multi-gateway.json)
+
+```json
+// gateway-a/openclaw.json (port 8080)
+// gateway-b/openclaw.json (port 8081)
+// gateway-c/openclaw.json (port 8082)
+{
+  "gateway": { "port": 8080 },
+  "agents": {
+    "list": [{ "id": "dept-a-agent", "workspace": "./workspace/department-a" }]
+  }
+}
+```
+
+---
+
+## 📋 Choosing a Scheme
+
+### Decision Tree
+
+```
+Need isolation?
+├─ No → Scheme A (personal/testing)
+└─ Yes
+   ├─ Team with different roles? → Scheme B (soft isolation)
+   ├─ Single bot, multiple departments? → Scheme B2 (routing)
+   ├─ Security/compliance required? → Scheme C (Docker)
+   └─ Enterprise/HA required? → Scheme D (multi-gateway)
+```
+
+### Comparison Matrix
+
+| Requirement | A | B | B2 | C | D |
+|-------------|---|---|----|---|---|
+| Personal use | ✅ | ⚠️ | ❌ | ❌ | ❌ |
+| Team collaboration | ❌ | ✅ | ✅ | ⚠️ | ✅ |
+| Different roles | ❌ | ✅ | ✅ | ⚠️ | ✅ |
+| Single bot entry | ❌ | ❌ | ✅ | ❌ | ❌ |
+| Security isolation | ❌ | ❌ | ❌ | ✅ | ✅ |
+| Independent scaling | ❌ | ❌ | ❌ | ❌ | ✅ |
+| Simple setup | ✅ | ✅ | ⚠️ | ❌ | ❌ |
+
+**Legend**: ✅ Ideal | ⚠️ Possible | ❌ Not suitable
+
+---
+
+## ⚙️ Multi-Agent Configuration Reference
+
+### New Configuration Fields
+
+| Field | Type | Description | Default |
+|-------|------|-------------|---------|
+| `agents.list[].id` | string | Unique agent identifier | — |
+| `agents.list[].name` | string | Human-readable agent name | — |
+| `agents.list[].workspace` | string | Agent workspace directory | — |
+| `agents.list[].settings.systemPrompt` | string | Agent-specific system prompt | — |
+| `agents.list[].settings.temperature` | number | Model temperature (0-2) | 0.7 |
+| `agents.defaults` | object | Default settings for all agents | `{}` |
+| `agents.defaults.sandbox` | object | Docker sandbox configuration | — |
+| `bindings[].agent` | string | Target agent ID for this binding | — |
+| `bindings[].description` | string | Optional binding description | — |
+| `routing.enabled` | boolean | Enable message routing | `false` |
+| `routing.strategy` | string | `group-based` or `user-based` | — |
+| `routing.fallback` | string | Default agent when no rule matches | — |
+| `routing.rules[]` | array | Routing rules with conditions | `[]` |
+| `sessions.isolation` | string | `soft` or `hard` | `soft` |
+| `security.sandboxEnforcement` | boolean | Enforce Docker sandbox | `false` |
+| `security.blockedCommands` | array | Commands to block in sandbox | `[]` |
+
+### Environment Variables
+
+All sensitive values support environment variable substitution:
+
+```json
+{
+  "gateway": { "token": "${GATEWAY_TOKEN}" },
+  "agents": {
+    "list": [{
+      "model": { "apiKey": "${OPENAI_API_KEY}" }
+    }]
+  }
+}
+```
+
+---
+
+## 🔄 Migration Guide
+
+### From Single Agent (Scheme A) to Multi-Agent (Scheme B)
+
+**Step 1**: Add additional agents to `agents.list`:
+
+```json
+// Before
+"agents": {
+  "list": [{ "id": "main-agent", "workspace": "./workspace/main" }]
+}
+
+// After
+"agents": {
+  "list": [
+    { "id": "frontend-agent", "workspace": "./workspace/frontend" },
+    { "id": "backend-agent", "workspace": "./workspace/backend" }
+  ]
+}
+```
+
+**Step 2**: Update bindings to specify target agents:
+
+```json
+"bindings": [
+  { "agent": "frontend-agent", "peer": { "kind": "wecom", "id": "xxx-frontend-group" } },
+  { "agent": "backend-agent", "peer": { "kind": "wecom", "id": "xxx-backend-group" } }
+]
+```
+
+**Step 3**: Create separate workspace directories:
+
+```bash
+mkdir -p ./workspace/frontend ./workspace/backend
+```
+
+### Adding Routing (Scheme B → B2)
+
+Add a `routing` section to enable automatic message routing:
+
+```json
+"routing": {
+  "enabled": true,
+  "strategy": "group-based",
+  "fallback": "main-agent",
+  "rules": [
+    {
+      "condition": { "peer.kind": "wecom", "peer.id": "xxx-group-id" },
+      "target": "specific-agent"
+    }
+  ]
+}
+```
+
+### Adding Docker Sandbox (Scheme B → C)
+
+Add sandbox configuration to `agents.defaults`:
+
+```json
+"agents": {
+  "defaults": {
+    "sandbox": {
+      "enabled": true,
+      "type": "docker",
+      "image": "node:20-alpine",
+      "docker": {
+        "binds": ["./workspace:/workspace:rw"],
+        "network": "none",
+        "memory": "512m",
+        "cpuQuota": 50000
+      }
+    }
+  }
+}
+```
+
+**Prerequisites**:
+
+```bash
+# Install Docker
+brew install --cask docker  # macOS
+apt-get install docker.io   # Linux
+
+# Verify
+docker run hello-world
+```
+
+### Splitting to Multiple Gateways (Scheme B → D)
+
+1. Copy installation to separate directories:
+   ```bash
+   cp -r openclaw gateway-a
+   cp -r openclaw gateway-b
+   ```
+
+2. Update each gateway's port and workspace:
+   ```json
+   // gateway-a/openclaw.json
+   { "gateway": { "port": 8080 }, "agents": { "list": [{ "workspace": "./workspace/department-a" }] } }
+   
+   // gateway-b/openclaw.json
+   { "gateway": { "port": 8081 }, "agents": { "list": [{ "workspace": "./workspace/department-b" }] } }
+   ```
+
+3. Run each gateway separately:
+   ```bash
+   cd gateway-a && openclaw start  # Terminal 1
+   cd gateway-b && openclaw start  # Terminal 2
+   ```
+
+---
+
+## 📁 Examples
+
+Complete configuration files for all 5 schemes are available in the [`examples/`](examples/) directory:
+
+| File | Scheme | Description |
+|------|--------|-------------|
+| [`scheme-a-single-agent.json`](examples/scheme-a-single-agent.json) | A | Single agent, shared workspace |
+| [`scheme-b-multi-agent-soft.json`](examples/scheme-b-multi-agent-soft.json) | B | Multiple agents, soft isolation |
+| [`scheme-b2-multi-agent-single-bot.json`](examples/scheme-b2-multi-agent-single-bot.json) | B2 | Multiple agents with routing |
+| [`scheme-c-docker-sandbox.json`](examples/scheme-c-docker-sandbox.json) | C | Docker sandbox isolation |
+| [`scheme-d-multi-gateway.json`](examples/scheme-d-multi-gateway.json) | D | Multiple gateway deployment |
+
+For detailed documentation on each scheme, see [`examples/README.md`](examples/README.md).
+
+---
+
 ## 📦 Update
 
 ```shell

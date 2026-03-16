@@ -171,19 +171,34 @@ async function saveMcpConfigToPluginJson(
 /**
  * 拉取 MCP 配置并持久化到 openclaw.plugin.json
  *
- * 认证成功后调用。失败仅记录日志,不影响 WebSocket 消息正常收发。
+ * 认证成功后调用。失败仅记录日志，不影响 WebSocket 消息正常收发。
+ *
+ * 支持两种 MCP 配置模式：
+ * 1. 服务端拉取：通过 aibot_get_mcp_config 从企微弱服务获取（默认）
+ * 2. 本地配置：从 openclaw.json 的 agents.list[].mcpServers 读取
+ * 
+ * 优先级：本地配置 > 服务端拉取
  *
  * @param wsClient - 已认证的 WSClient 实例
  * @param accountId - 账户 ID(用于日志)
- * @param runtime - 运行时环境(用于日志)
+ * @param runtime - 运行时环境 (用于日志)
+ * @param agentMcpConfig - 可选的本地 MCP 配置（从 agents.list[].mcpServers）
  */
 export async function fetchAndSaveMcpConfig(
   wsClient: WSClient,
   accountId: string,
   runtime: RuntimeEnv,
+  agentMcpConfig?: Record<string, { type?: string; url: string }>,
 ): Promise<void> {
   try {
-    runtime.log?.(`[${accountId}] Fetching MCP config...`);
+    // 优先使用本地 MCP 配置（如果提供）
+    if (agentMcpConfig && Object.keys(agentMcpConfig).length > 0) {
+      runtime.log?.(`[${accountId}] Using local MCP config for ${Object.keys(agentMcpConfig).length} server(s)`);
+      await saveMcpConfigToPluginJsonFromLocal(agentMcpConfig, runtime, accountId);
+      return;
+    }
+    
+    runtime.log?.(`[${accountId}] Fetching MCP config from server...`);
 
     const config = await fetchMcpConfig(wsClient);
     runtime.log?.(
@@ -196,4 +211,50 @@ export async function fetchAndSaveMcpConfig(
       `[${accountId}] Failed to fetch/save MCP config: ${String(err)}`,
     );
   }
+}
+
+/**
+ * 将本地 MCP 配置（从 agents.list[].mcpServers）写入配置文件
+ */
+async function saveMcpConfigToPluginJsonFromLocal(
+  mcpServers: Record<string, { type?: string; url: string }>,
+  runtime: RuntimeEnv,
+  accountId: string,
+): Promise<void> {
+  const wecomConfigDir = path.join(os.homedir(), ".openclaw", "wecomConfig");
+  const wecomConfigPath = path.join(wecomConfigDir, "config.json");
+  
+  const lockOptions = {
+    stale: 60_000,
+    retries: {
+      retries: 6,
+      factor: 1.35,
+      minTimeout: 8,
+      maxTimeout: 1200,
+      randomize: true,
+    },
+  };
+
+  await withFileLock(wecomConfigPath, lockOptions, async () => {
+    const { value: pluginJson } = await readJsonFileWithFallback<Record<string, unknown>>(
+      wecomConfigPath,
+      {},
+    );
+
+    if (!pluginJson.mcpConfig || typeof pluginJson.mcpConfig !== 'object') {
+      pluginJson.mcpConfig = {};
+    }
+
+    // 将每个 MCP server 写入配置
+    for (const [name, server] of Object.entries(mcpServers)) {
+      (pluginJson.mcpConfig as Record<string, unknown>)[name] = {
+        type: server.type || "streamable-http",
+        url: server.url,
+      };
+    }
+
+    await writeJsonFileAtomically(wecomConfigPath, pluginJson);
+    runtime.log?.(`[${accountId}] Local MCP config saved: ${Object.keys(mcpServers).join(", ")}`);
+  });
+}
 }

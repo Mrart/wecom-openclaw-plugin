@@ -56,6 +56,50 @@ export interface ResolvedWeComAccount {
 }
 
 /**
+ * 企业微信多账户配置项（用于 accounts 数组中的每个账户）
+ */
+export interface WeComAccountConfig {
+  accountId: string;
+  name?: string;
+  enabled?: boolean;
+  websocketUrl?: string;
+  botId: string;
+  secret: string;
+  allowFrom?: Array<string | number>;
+  dmPolicy?: "open" | "allowlist" | "pairing" | "disabled";
+  groupPolicy?: "open" | "allowlist" | "disabled";
+  groupAllowFrom?: Array<string | number>;
+  groups?: Record<string, WeComGroupConfig>;
+  sendThinkingMessage?: boolean;
+  mediaLocalRoots?: string[];
+}
+
+/**
+ * 企业微信配置（支持多账户模式）
+ */
+export interface WeComMultiAccountConfig {
+  enabled?: boolean;
+  websocketUrl?: string;
+  botId?: string;
+  secret?: string;
+  name?: string;
+  allowFrom?: Array<string | number>;
+  dmPolicy?: "open" | "allowlist" | "pairing" | "disabled";
+  groupPolicy?: "open" | "allowlist" | "disabled";
+  groupAllowFrom?: Array<string | number>;
+  groups?: Record<string, WeComGroupConfig>;
+  sendThinkingMessage?: boolean;
+  mediaLocalRoots?: string[];
+  /** 多账户配置（优先级高于单账户配置） */
+  accounts?: WeComAccountConfig[];
+}
+
+/**
+ * 企业微信账户映射表
+ */
+export type WeComAccountMap = Map<string, ResolvedWeComAccount>;
+
+/**
  * 解析企业微信账户配置
  */
 export function resolveWeComAccount(cfg: OpenClawConfig): ResolvedWeComAccount {
@@ -71,6 +115,54 @@ export function resolveWeComAccount(cfg: OpenClawConfig): ResolvedWeComAccount {
     sendThinkingMessage: wecomConfig.sendThinkingMessage ?? true,
     config: wecomConfig,
   };
+}
+
+/**
+ * 解析企业微信多账户配置
+ * 支持两种配置格式：
+ * 1. 传统单账户格式：channels.wecom.botId
+ * 2. 新多账户格式：channels.wecom.accounts
+ */
+export function resolveWeComAccounts(cfg: OpenClawConfig): ResolvedWeComAccount[] {
+  const wecomConfig = (cfg.channels?.[CHANNEL_ID] ?? {}) as WeComMultiAccountConfig;
+  const accounts: ResolvedWeComAccount[] = [];
+
+  // 检查是否配置了多账户模式
+  if (wecomConfig.accounts && wecomConfig.accounts.length > 0) {
+    // 多账户模式：解析每个账户配置
+    for (const accountConfig of wecomConfig.accounts) {
+      if (!accountConfig.accountId) {
+        throw new Error("Multi-account config: each account must have an accountId");
+      }
+      if (!accountConfig.botId) {
+        throw new Error(`Multi-account config: account "${accountConfig.accountId}" is missing botId`);
+      }
+      if (!accountConfig.secret) {
+        throw new Error(`Multi-account config: account "${accountConfig.accountId}" is missing secret`);
+      }
+
+      accounts.push({
+        accountId: accountConfig.accountId,
+        name: accountConfig.name ?? wecomConfig.name ?? "企业微信",
+        enabled: accountConfig.enabled ?? wecomConfig.enabled ?? false,
+        websocketUrl: accountConfig.websocketUrl ?? wecomConfig.websocketUrl ?? DefaultWsUrl,
+        botId: accountConfig.botId,
+        secret: accountConfig.secret,
+        sendThinkingMessage: accountConfig.sendThinkingMessage ?? wecomConfig.sendThinkingMessage ?? true,
+        config: {
+          ...wecomConfig,
+          ...accountConfig,
+        } as WeComConfig,
+      });
+    }
+  } else {
+    // 传统单账户模式：回退到单个账户解析
+    if (wecomConfig.botId) {
+      accounts.push(resolveWeComAccount(cfg));
+    }
+  }
+
+  return accounts;
 }
 
 /**
@@ -99,11 +191,40 @@ export function setWeComAccount(
       : {}),
   };
 
-return {
-    ...cfg,
-    channels: {
-      ...cfg.channels,
-      [CHANNEL_ID]: merged,
-    },
+  return {
+      ...cfg,
+      channels: {
+        ...cfg.channels,
+        [CHANNEL_ID]: merged,
+      },
+    };
   };
+}
+
+/**
+ * 根据 accountId 查找已解析的企业微信账户
+ */
+export function getWeComAccountById(
+  cfg: OpenClawConfig,
+  accountId: string,
+): ResolvedWeComAccount | undefined {
+  const accounts = resolveWeComAccounts(cfg);
+  return accounts.find((account) => account.accountId === accountId);
+}
+
+/**
+ * 获取所有已解析的企业微信账户 ID 列表
+ */
+export function getAllWeComAccountIds(cfg: OpenClawConfig): string[] {
+  const accounts = resolveWeComAccounts(cfg);
+  return accounts.map((account) => account.accountId);
+}
+
+/**
+ * 将账户列表转换为账户映射表
+ */
+export function createWeComAccountMap(
+  accounts: ResolvedWeComAccount[],
+): WeComAccountMap {
+  return new Map(accounts.map((account) => [account.accountId, account]));
 }

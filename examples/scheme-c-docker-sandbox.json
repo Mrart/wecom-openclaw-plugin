@@ -1,0 +1,90 @@
+{
+  "$schema": "https://example.com/openclaw-schema.json",
+  "description": "Scheme C: Docker Sandbox - Hard isolation for security-sensitive data",
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "path": "/openclaw/message",
+    "token": "xxx-your-gateway-token-xxx"
+  },
+  "agents": {
+    "list": [
+      {
+        "id": "secure-agent",
+        "name": "Secure Agent",
+        "workspace": "./workspace/secure",
+        "model": {
+          "provider": "openai",
+          "name": "gpt-4o",
+          "apiKey": "xxx-your-openai-api-key-xxx"
+        },
+        "tools": {
+          "enabled": ["bash", "read", "write", "edit"]
+        }
+      }
+    ],
+    "defaults": {
+      "sandbox": {
+        "enabled": true,
+        "type": "docker",
+        "image": "node:20-alpine",
+        "docker": {
+          "binds": [
+            "./workspace:/workspace:rw",
+            "./tmp:/tmp:rw"
+          ],
+          "network": "none",
+          "memory": "512m",
+          "cpuQuota": 50000,
+          "readOnly": false,
+          "securityOpt": [
+            "no-new-privileges:true"
+          ]
+        },
+        "environment": {
+          "NODE_ENV": "production",
+          "WORKSPACE_ROOT": "/workspace"
+        }
+      }
+    }
+  },
+  "bindings": [
+    {
+      "agent": "secure-agent",
+      "peer": {
+        "kind": "wecom",
+        "id": "xxx-secure-group-id-xxx"
+      }
+    }
+  ],
+  "sessions": {
+    "strategy": "multi",
+    "storage": "./sessions",
+    "isolation": "hard",
+    "sandbox": {
+      "enabled": true,
+      "cleanup": true,
+      "timeout": 3600
+    }
+  },
+  "security": {
+    "sandboxEnforcement": true,
+    "allowNetworkAccess": false,
+    "allowedPaths": [
+      "./workspace",
+      "./tmp"
+    ],
+    "blockedCommands": [
+      "sudo",
+      "su",
+      "rm -rf /",
+      "dd",
+      "mkfs"
+    ]
+  },
+  "logging": {
+    "level": "debug",
+    "file": "./logs/openclaw.log",
+    "audit": true
+  }
+}

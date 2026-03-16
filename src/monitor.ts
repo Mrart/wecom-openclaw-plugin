@@ -23,7 +23,8 @@ import { WSClient, generateReqId } from "@wecom/aibot-node-sdk";
 import type { WsFrame, Logger } from "@wecom/aibot-node-sdk";
 import { getWeComRuntime } from "./runtime.js";
 import { getDefaultMediaLocalRoots } from "./openclaw-compat.js";
-import type { ResolvedWeComAccount, WeComConfig } from "./utils.js";
+import type { ResolvedWeComAccount, WeComConfig, WeComAccountMap } from "./utils.js";
+import { resolveWeComAccounts } from "./utils.js";
 import {
   CHANNEL_ID,
   THINKING_MESSAGE,
@@ -634,12 +635,13 @@ function createSdkLogger(runtime: RuntimeEnv, accountId: string): Logger {
 }
 
 // ============================================================================
-// 主函数
+// 主函数 - 单账号（已废弃）
 // ============================================================================
 
 /**
- * 监听企业微信 WebSocket 连接
+ * 监听企业微信 WebSocket 连接（单账号模式）
  * 使用 aibot-node-sdk 简化连接管理
+ * @deprecated Use createMultiAccountWeComMonitors() for multi-account support
  */
 export async function monitorWeComProvider(options: WeComMonitorOptions): Promise<void> {
   const { account, config, runtime, abortSignal } = options;
@@ -687,7 +689,161 @@ export async function monitorWeComProvider(options: WeComMonitorOptions): Promis
       setWeComWebSocket(account.accountId, wsClient);
 
       // 认证成功后自动拉取 MCP 配置（异步，失败不影响主流程）
-      fetchAndSaveMcpConfig(wsClient, account.accountId, runtime);
+      // 优先使用本地 MCP 配置（如提供），否则从服务端拉取
+      fetchAndSaveMcpConfig(wsClient, account.accountId, runtime, options.agentMcpConfig);
+    });
+
+    // 监听断开事件
+    wsClient.on("disconnected", (reason) => {
+      runtime.log?.(`[${account.accountId}] WebSocket disconnected: ${reason}`);
+    });
+
+    // 监听重连事件
+    wsClient.on("reconnecting", (attempt) => {
+      runtime.log?.(`[${account.accountId}] Reconnecting attempt ${attempt}...`);
+    });
+
+    // 监听错误事件
+    wsClient.on("error", (error) => {
+      runtime.error?.(`[${account.accountId}] WebSocket error: ${error.message}`);
+      // 认证失败时拒绝 Promise
+      if (error.message.includes("Authentication failed")) {
+        cleanup().finally(() => reject(error));
+      }
+    });
+
+    // 监听所有消息
+    wsClient.on("message", async (frame: WsFrame) => {
+      try {
+        await processWeComMessage({
+          frame,
+          account,
+          config,
+          runtime,
+          wsClient,
+        });
+      } catch (err) {
+        runtime.error?.(`[${account.accountId}] Failed to process message: ${String(err)}`);
+      }
+    });
+
+    // 启动前预热 reqId 缓存，确保完成后再建立连接，避免 getSync 在预热完成前返回 undefined
+    warmupReqIdStore(account.accountId, (...args) => runtime.log?.(...args))
+      .then((count) => {
+        runtime.log?.(`[${account.accountId}] Warmed up ${count} reqId entries from disk`);
+      })
+      .catch((err) => {
+        runtime.error?.(`[${account.accountId}] Failed to warmup reqId store: ${String(err)}`);
+      })
+      .finally(() => {
+        // 无论预热成功或失败，都建立连接
+        wsClient.connect();
+      });
+  });
+}
+
+// ============================================================================
+// 主函数 - 多账号支持
+// ============================================================================
+
+/**
+ * 为多个企业微信账号创建独立的 WebSocket 监控器
+ * 
+ * 支持配置模式：
+ * - 单账号：channels.wecom.botId（向后兼容）
+ * - 多账号：channels.wecom.accounts[]
+ * 
+ * 每个账号独立运行：
+ * - 独立的 WebSocket 连接
+ * - 独立的心跳和重连
+ * - 独立的 MCP 配置
+ * - 共享消息状态管理（通过 accountId 区分）
+ * 
+ * @param config WeCom 配置
+ * @param runtime 运行时环境
+ * @param abortSignal 中止信号
+ * @returns Promise，当所有连接关闭时 resolve
+ */
+export async function createMultiAccountWeComMonitors(params: {
+  config: WeComConfig;
+  openClawConfig: OpenClawConfig;
+  runtime: RuntimeEnv;
+  abortSignal?: AbortSignal;
+}): Promise<void> {
+  const { config, openClawConfig, runtime, abortSignal } = params;
+
+  // 解析所有账号（支持单账号和多账号模式）
+  const accounts = resolveWeComAccounts(config);
+
+  if (accounts.length === 0) {
+    throw new Error("No WeCom accounts configured. Add botId/secret or accounts[] to config.");
+  }
+
+  runtime.log?.(`[wecom] Starting multi-account monitors for ${accounts.length} account(s): ${accounts.map(a => a.accountId).join(", ")}`);
+
+  // 为每个账号创建独立的 WebSocket 连接
+  const connectionPromises = accounts.map((account) => createSingleAccountMonitor({
+    account,
+    config: openClawConfig,
+    runtime,
+    abortSignal,
+  }));
+
+  // 等待所有连接完成（或出错）
+  await Promise.all(connectionPromises);
+}
+
+/**
+ * 为单个账号创建 WebSocket 监控器
+ */
+async function createSingleAccountMonitor(options: WeComMonitorOptions): Promise<void> {
+  const { account, config, runtime, abortSignal } = options;
+
+  runtime.log?.(`[${account.accountId}] Initializing WSClient with SDK...`);
+
+  // 启动消息状态定期清理（多账号共享同一个清理任务）
+  startMessageStateCleanup();
+
+  return new Promise((resolve, reject) => {
+    const logger = createSdkLogger(runtime, account.accountId);
+
+    const wsClient = new WSClient({
+      botId: account.botId,
+      secret: account.secret,
+      wsUrl: account.websocketUrl,
+      logger,
+      heartbeatInterval: WS_HEARTBEAT_INTERVAL_MS,
+      maxReconnectAttempts: WS_MAX_RECONNECT_ATTEMPTS,
+    });
+
+    // 清理函数：确保所有资源被释放
+    const cleanup = async () => {
+      stopMessageStateCleanup();
+      await cleanupAccount(account.accountId);
+    };
+
+    // 处理中止信号
+    if (abortSignal) {
+      abortSignal.addEventListener("abort", async () => {
+        runtime.log?.(`[${account.accountId}] Connection aborted`);
+        await cleanup();
+        resolve();
+      });
+    }
+
+    // 监听连接事件
+    wsClient.on("connected", () => {
+      runtime.log?.(`[${account.accountId}] WebSocket connected`);
+    });
+
+    // 监听认证成功事件
+    wsClient.on("authenticated", () => {
+      runtime.log?.(`[${account.accountId}] Authentication successful`);
+      setWeComWebSocket(account.accountId, wsClient);
+
+      // 认证成功后自动拉取 MCP 配置（异步，失败不影响主流程）
+      // 优先使用本地 MCP 配置（如提供），否则从服务端拉取
+      fetchAndSaveMcpConfig(wsClient, account.accountId, runtime, options.agentMcpConfig);
     });
 
     // 监听断开事件

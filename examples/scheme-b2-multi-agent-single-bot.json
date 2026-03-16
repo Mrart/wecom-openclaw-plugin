@@ -1,0 +1,129 @@
+{
+  "$schema": "https://example.com/openclaw-schema.json",
+  "description": "Scheme B2: Multiple Agents, Single Bot - Routing by group/user for unified entry point",
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "path": "/openclaw/message",
+    "token": "xxx-your-gateway-token-xxx"
+  },
+  "agents": {
+    "list": [
+      {
+        "id": "support-agent",
+        "name": "Customer Support",
+        "workspace": "./workspace/support",
+        "model": {
+          "provider": "openai",
+          "name": "gpt-4o",
+          "apiKey": "xxx-your-openai-api-key-xxx"
+        },
+        "tools": {
+          "enabled": ["read", "write", "glob"]
+        },
+        "settings": {
+          "systemPrompt": "You are a customer support specialist.",
+          "temperature": 0.8
+        }
+      },
+      {
+        "id": "sales-agent",
+        "name": "Sales Assistant",
+        "workspace": "./workspace/sales",
+        "model": {
+          "provider": "openai",
+          "name": "gpt-4o",
+          "apiKey": "xxx-your-openai-api-key-xxx"
+        },
+        "tools": {
+          "enabled": ["read", "write", "glob"]
+        },
+        "settings": {
+          "systemPrompt": "You are a sales assistant.",
+          "temperature": 0.9
+        }
+      },
+      {
+        "id": "technical-agent",
+        "name": "Technical Support",
+        "workspace": "./workspace/technical",
+        "model": {
+          "provider": "openai",
+          "name": "gpt-4o",
+          "apiKey": "xxx-your-openai-api-key-xxx"
+        },
+        "tools": {
+          "enabled": ["bash", "read", "write", "edit", "glob", "grep"]
+        },
+        "settings": {
+          "systemPrompt": "You are a technical support engineer.",
+          "temperature": 0.5
+        }
+      }
+    ]
+  },
+  "bindings": [
+    {
+      "agent": "support-agent",
+      "peer": {
+        "kind": "wecom",
+        "id": "xxx-support-group-id-xxx"
+      },
+      "description": "All messages from support group go to support agent"
+    },
+    {
+      "agent": "sales-agent",
+      "peer": {
+        "kind": "wecom",
+        "id": "xxx-sales-group-id-xxx"
+      },
+      "description": "All messages from sales group go to sales agent"
+    },
+    {
+      "agent": "technical-agent",
+      "peer": {
+        "kind": "wecom",
+        "id": "xxx-technical-group-id-xxx"
+      },
+      "description": "All messages from technical group go to technical agent"
+    }
+  ],
+  "routing": {
+    "enabled": true,
+    "strategy": "group-based",
+    "fallback": "support-agent",
+    "rules": [
+      {
+        "condition": {
+          "peer.kind": "wecom",
+          "peer.id": "xxx-support-group-id-xxx"
+        },
+        "target": "support-agent"
+      },
+      {
+        "condition": {
+          "peer.kind": "wecom",
+          "peer.id": "xxx-sales-group-id-xxx"
+        },
+        "target": "sales-agent"
+      },
+      {
+        "condition": {
+          "peer.kind": "wecom",
+          "peer.id": "xxx-technical-group-id-xxx"
+        },
+        "target": "technical-agent"
+      }
+    ]
+  },
+  "sessions": {
+    "strategy": "multi",
+    "storage": "./sessions",
+    "isolation": "soft",
+    "perGroup": true
+  },
+  "logging": {
+    "level": "info",
+    "file": "./logs/openclaw.log"
+  }
+}

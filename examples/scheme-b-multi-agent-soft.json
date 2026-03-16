@@ -1,0 +1,106 @@
+{
+  "$schema": "https://example.com/openclaw-schema.json",
+  "description": "Scheme B: Multiple Agents with Soft Isolation - Recommended for teams with different roles",
+  "gateway": {
+    "host": "0.0.0.0",
+    "port": 8080,
+    "path": "/openclaw/message",
+    "token": "xxx-your-gateway-token-xxx"
+  },
+  "agents": {
+    "list": [
+      {
+        "id": "frontend-agent",
+        "name": "Frontend Developer",
+        "workspace": "./workspace/frontend",
+        "model": {
+          "provider": "openai",
+          "name": "gpt-4o",
+          "apiKey": "xxx-your-openai-api-key-xxx"
+        },
+        "tools": {
+          "enabled": ["bash", "read", "write", "edit", "glob", "grep"]
+        },
+        "settings": {
+          "systemPrompt": "You are a frontend development specialist.",
+          "temperature": 0.7
+        }
+      },
+      {
+        "id": "backend-agent",
+        "name": "Backend Developer",
+        "workspace": "./workspace/backend",
+        "model": {
+          "provider": "openai",
+          "name": "gpt-4o",
+          "apiKey": "xxx-your-openai-api-key-xxx"
+        },
+        "tools": {
+          "enabled": ["bash", "read", "write", "edit", "glob", "grep"]
+        },
+        "settings": {
+          "systemPrompt": "You are a backend development specialist.",
+          "temperature": 0.5
+        }
+      },
+      {
+        "id": "devops-agent",
+        "name": "DevOps Engineer",
+        "workspace": "./workspace/devops",
+        "model": {
+          "provider": "openai",
+          "name": "gpt-4o",
+          "apiKey": "xxx-your-openai-api-key-xxx"
+        },
+        "tools": {
+          "enabled": ["bash", "read", "write", "edit", "glob", "grep"]
+        },
+        "settings": {
+          "systemPrompt": "You are a DevOps and infrastructure specialist.",
+          "temperature": 0.3
+        }
+      }
+    ],
+    "defaults": {
+      "model": {
+        "provider": "openai",
+        "name": "gpt-4o-mini"
+      },
+      "tools": {
+        "enabled": ["bash", "read", "write"]
+      }
+    }
+  },
+  "bindings": [
+    {
+      "agent": "frontend-agent",
+      "peer": {
+        "kind": "wecom",
+        "id": "xxx-frontend-group-id-xxx"
+      }
+    },
+    {
+      "agent": "backend-agent",
+      "peer": {
+        "kind": "wecom",
+        "id": "xxx-backend-group-id-xxx"
+      }
+    },
+    {
+      "agent": "devops-agent",
+      "peer": {
+        "kind": "wecom",
+        "id": "xxx-devops-group-id-xxx"
+      }
+    }
+  ],
+  "sessions": {
+    "strategy": "multi",
+    "storage": "./sessions",
+    "isolation": "soft"
+  },
+  "logging": {
+    "level": "info",
+    "file": "./logs/openclaw.log"
+  }
+}
